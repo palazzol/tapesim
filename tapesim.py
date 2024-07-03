@@ -50,17 +50,16 @@ class AudioGenerator:
         # (Sinusoidal)
         self.zero = (self.amplitude*np.sin(np.linspace(0, 9*np.pi/10, num=10))).astype('<i2')
         self.one = (self.amplitude/2*np.sin(np.linspace(0, 9*np.pi/5, num=10))).astype('<i2')
-        # Blank buffer
-        self.noaudio = np.full(10, 0, dtype='<i2')
-
+        
         # The main dict of sample data is here
         self.sample = {}
         self.last_sense = 0
 
-        # Two special patches
-        self.addBuffer('blank', np.tile(self.noaudio,12))
-        self.addBuffer('idle',  np.tile(np.hstack((self.zero, -self.zero)), 6))
-        
+        # Three special patches
+        self.addBuffer('silent', np.full(120, 0, dtype='<i2'))
+        self.addBuffer('carrier',  np.tile(np.hstack((self.zero, -self.zero)), 6))
+        self.addBuffer('freq200', (self.amplitude*np.sin(np.linspace(0, 119*np.pi/120, num=120))).astype('<i2'))
+
         # Byte codes
         for i in range(0, 256):
             self.addBuffer(chr(i))
@@ -70,7 +69,9 @@ class AudioGenerator:
             code = ord(name[0])
             # TBD - generate primary buffer here
             sense = 0
+            # Start Bit
             buffer = self.one
+            # 8 Data Bits
             for i in range(0,8):
                 if (code >> i) & 0x01 == 1:
                     if sense == 0:
@@ -83,6 +84,7 @@ class AudioGenerator:
                         buffer = np.hstack((buffer, self.one))
                     else:
                         buffer = np.hstack((buffer, -self.one))
+            # Two Stop bits + Idle bit
             for i in range(0,3):
                 if sense == 0:
                     buffer = np.hstack((buffer, self.zero))
@@ -125,6 +127,7 @@ class HandshakeFlag:
 class ButtonApp(App):
     def __init__(self):
         self.carrier_on = False
+        self.freq200_on = False
         App.__init__(self)
 
     def on_start(self):
@@ -149,9 +152,11 @@ class ButtonApp(App):
             if b != b'':
                 self.flag.SecondaryAckMain()
             elif self.carrier_on:
-                b = self.audio.getBuffer('idle')
+                b = self.audio.getBuffer('carrier')
+            elif self.freq200_on:
+                b = self.audio.getBuffer('freq200')
             else:
-                b = self.audio.getBuffer('blank')
+                b = self.audio.getBuffer('silent')
             if self.wf:
                 self.wf.writeframes(b)
             return (b, pyaudio.paContinue)
@@ -180,7 +185,14 @@ class ButtonApp(App):
                    #size =(32, 32),
                    #size_hint =(.2, .2),
                    #pos =(200, 250))
-        self.btn2 = Button(text ="Send Char",
+        self.btn2 = Button(text = "200 Hz",
+                   font_size ="20sp",
+                   background_color =(1, 1, 1, 1),
+                   color =(1, 1, 1, 1))
+                   #size =(32, 32),
+                   #size_hint =(.2, .2),
+                   #pos =(200, 250))
+        self.btn3 = Button(text ="Send Char",
                    font_size ="20sp",
                    background_color =(1, 1, 1, 1),
                    color =(1, 1, 1, 1))
@@ -189,10 +201,12 @@ class ButtonApp(App):
                    #pos =(300, 250))
         # bind() use to bind the button to function callback
         self.btn1.bind(on_press = self.btn1callback)
-        self.btn2.bind(on_press = self.btn2callback)
+        self.btn2.bind(state = self.btn2callback)
+        self.btn3.bind(on_press = self.btn3callback)
         boxlayout = BoxLayout()
         boxlayout.add_widget(self.btn1)
         boxlayout.add_widget(self.btn2)
+        boxlayout.add_widget(self.btn3)
         return boxlayout
 
     def btn1callback(self, event):
@@ -203,7 +217,13 @@ class ButtonApp(App):
             self.carrier_on = True
             self.btn1.text = "Carrier Off"
 
-    def btn2callback(self, event):
+    def btn2callback(self, event, state):
+        if state == 'down':
+            self.freq200_on = True
+        else:
+            self.freq200_on = False
+
+    def btn3callback(self, event):
         if not self.carrier_on:
             return
         while not self.flag.MainAckd():
